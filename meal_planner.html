@@ -853,6 +853,7 @@ function render(){
     tr.innerHTML=dayHtml;
     tbody.appendChild(tr);
   });
+  renderMobile();
 }
 
 // ── Toggle out ────────────────────────────────────────────────────────────────
@@ -1104,12 +1105,6 @@ document.querySelectorAll('.overlay').forEach(o=>{
   o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');});
 });
 
-// Patch render to also update mobile
-const _origRender = render;
-function render(){
-  _origRender();
-  renderMobile();
-}
 render();
 </script>
 </body>
