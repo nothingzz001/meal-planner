@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "builds": [
+    { "src": "meal_planner.html", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/", "dest": "/meal_planner.html" }
+  ]
+}
