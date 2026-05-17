@@ -287,6 +287,57 @@ body {
 .fruit-dot { background: var(--fruit); }
 .carbs-dot { background: var(--carbs); }
 
+
+/* ── Mobile layout (phones) ────────────────────────────── */
+@media (max-width: 700px) {
+  .topbar { padding: 0 14px; height: auto; min-height: 52px; flex-wrap: wrap; gap: 8px; padding-top: 10px; padding-bottom: 10px; }
+  .app-title { font-size: 16px; }
+  .week-label { min-width: 90px; font-size: 11px; }
+  .topbar-right { gap: 6px; }
+  .btn { padding: 5px 10px; font-size: 12px; }
+  .main { padding: 12px 12px 100px; }
+
+  /* Hide table entirely on mobile */
+  .plan-wrap { display: none; }
+
+  /* Show mobile cards instead */
+  .mobile-plan { display: flex; flex-direction: column; gap: 10px; }
+
+  .day-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .day-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+  }
+  .day-card-left { display: flex; align-items: center; gap: 10px; }
+  .day-card-name { font-size: 15px; font-weight: 600; }
+  .day-card-date { font-size: 12px; color: var(--text3); }
+
+  .meal-block { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .meal-block:last-child { border-bottom: none; }
+  .meal-block-head {
+    display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;
+  }
+  .meal-block-label {
+    font-size: 11px; font-weight: 600; color: var(--text3);
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+  .send-bar { padding: 10px 14px; }
+  .send-bar-text { display: none; }
+}
+
+/* Hide mobile cards on desktop */
+.mobile-plan { display: none; }
+
 /* ── Send bar ── */
 .send-bar {
   position: fixed;
@@ -491,6 +542,8 @@ body {
       <tbody id="plan-body"></tbody>
     </table>
   </div>
+  <!-- Mobile card layout -->
+  <div class="mobile-plan" id="mobile-plan"></div>
 </main>
 
 <!-- Send bar -->
@@ -993,11 +1046,70 @@ function shareVia(platform){
 }
 function doShare(){if(shareUrl)window.open(shareUrl,'_blank');}
 
+// ── Mobile render ─────────────────────────────────────────────────────────────
+function renderMobile(){
+  const dates=getWeekDates();
+  const mp=document.getElementById('mobile-plan');
+  if(!mp) return;
+  mp.innerHTML='';
+  const ME={Breakfast:'🌅 Breakfast',Lunch:'☀️ Lunch',Dinner:'🌙 Dinner'};
+  DAYS.forEach((day,di)=>{
+    const data=plan[day];
+    const dt=dates[di];
+    const dateStr=dt.toLocaleDateString('en-SG',{weekday:'short',day:'numeric',month:'short'});
+    let html=`<div class="day-card">
+      <div class="day-card-header">
+        <div class="day-card-left">
+          <div>
+            <div class="day-card-name">${day}</div>
+            <div class="day-card-date">${dateStr}</div>
+          </div>
+          ${IS_WE[day]?'<span class="wknd-badge">Weekend</span>':''}
+        </div>
+      </div>`;
+    ['Breakfast','Lunch','Dinner'].forEach(meal=>{
+      const isOut=data.out[meal];
+      const dishes=data[meal]||[];
+      html+=`<div class="meal-block">
+        <div class="meal-block-head">
+          <span class="meal-block-label">${ME[meal]}</span>
+          <button class="out-toggle ${isOut?'active':''}" onclick="toggleOut('${day}','${meal}')">${isOut?'✓ Out':'Out?'}</button>
+        </div>`;
+      if(isOut){
+        html+=`<div class="out-state">🍽 Dining out</div>`;
+      } else {
+        dishes.forEach((d,i)=>{
+          const{name,ing}=dishLabel(d);
+          html+=`<div class="dish" onclick="openEdit('${day}','${meal}',${i})">
+            <span class="dish-dot ${TYPE_DOT[d.type]||'veg-dot'}"></span>
+            <div class="dish-info">
+              <div class="dish-name">${name}</div>
+              ${ing?`<div class="dish-ing">${ing}</div>`:''}
+            </div>
+            <span class="dish-edit-icon">✎</span>
+          </div>`;
+        });
+        html+=`<button class="add-btn" onclick="openAdd('${day}','${meal}')">+ Add dish</button>`;
+      }
+      html+=`</div>`;
+    });
+    html+=`</div>`;
+    mp.innerHTML+=html;
+  });
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.getElementById('m-name').addEventListener('keydown',e=>{if(e.key==='Enter')saveDish();});
 document.querySelectorAll('.overlay').forEach(o=>{
   o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');});
 });
+
+// Patch render to also update mobile
+const _origRender = render;
+function render(){
+  _origRender();
+  renderMobile();
+}
 render();
 </script>
 </body>
