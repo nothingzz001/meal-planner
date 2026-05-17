@@ -1,0 +1,16 @@
+# Secret credentials — NEVER commit this
+.env
+
+# Auto-generated plan file (regenerated on each run)
+current_plan.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# VS Code settings
+.vscode/
+
+# macOS
+.DS_Store

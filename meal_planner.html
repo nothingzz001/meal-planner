@@ -780,7 +780,13 @@ function generateWeek(){
   return p;
 }
 
-let plan = generateWeek();
+// ── API connection ──────────────────────────────────────────────────────────
+// When hosted on Railway, API_BASE is empty (same server).
+// When HTML is on Vercel and Flask is on Railway, set this to your Railway URL:
+//   const API_BASE = 'https://your-app.railway.app';
+const API_BASE = '';
+
+let plan = generateWeek(); // fallback until API loads
 let weekOffset = 0;
 let editCtx = {day:null, meal:null, idx:null};
 let shareUrl = '';
@@ -859,10 +865,23 @@ function render(){
 }
 
 // ── Toggle out ────────────────────────────────────────────────────────────────
-function toggleOut(day,meal){ plan[day].out[meal]=!plan[day].out[meal]; render(); }
+function toggleOut(day,meal){
+  plan[day].out[meal]=!plan[day].out[meal];
+  render();
+  savePlanToAPI();
+}
 
 // ── Regenerate ────────────────────────────────────────────────────────────────
-function regenerate(){ plan=generateWeek(); render(); }
+async function regenerate(){
+  try {
+    const res = await fetch(API_BASE + '/api/regenerate', {method:'POST'});
+    const data = await res.json();
+    if(data.ok){ plan=data.plan; render(); }
+  } catch(e){
+    // Fallback to local generation if API unreachable
+    plan=generateWeek(); render();
+  }
+}
 
 // ── Edit modal ────────────────────────────────────────────────────────────────
 function openEdit(day,meal,idx){
@@ -928,6 +947,18 @@ function onRecipePick(){
   }
 }
 
+async function savePlanToAPI(){
+  try {
+    await fetch(API_BASE + '/api/plan', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({plan})
+    });
+  } catch(e){
+    console.warn('Could not save to API — working offline', e);
+  }
+}
+
 function saveDish(){
   const day=document.getElementById('m-day').value;
   const meal=document.getElementById('m-meal').value;
@@ -951,6 +982,7 @@ function saveDish(){
   }
   closeOverlay('dish-overlay');
   render();
+  savePlanToAPI();
 }
 
 function deleteDish(){
@@ -958,6 +990,7 @@ function deleteDish(){
   if(idx!==null) plan[day][meal].splice(idx,1);
   closeOverlay('dish-overlay');
   render();
+  savePlanToAPI();
 }
 
 function closeOverlay(id){document.getElementById(id).classList.remove('open');}
@@ -1107,7 +1140,22 @@ document.querySelectorAll('.overlay').forEach(o=>{
   o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');});
 });
 
-render();
+// Load plan from Flask API on startup
+async function init(){
+  try {
+    const res  = await fetch(API_BASE + '/api/plan');
+    const data = await res.json();
+    if(data.ok){
+      plan = data.plan;
+      if(data.week) document.getElementById('week-label').textContent = data.week;
+    }
+  } catch(e){
+    console.warn('API not reachable — using local generated plan', e);
+  }
+  render();
+}
+
+init();
 </script>
 </body>
 </html>
