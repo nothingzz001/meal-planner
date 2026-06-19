@@ -26,7 +26,7 @@ def load_recipes() -> dict:
     {
         "protein": [ {"name": "Soy sauce Chicken", "ing": ["Chicken Thighs"]}, ... ],
         "veg":     [ {"name": "Spinach", "ing": ["Spinach", "Carrot", "Mushrooms"]}, ... ],
-        "soup":    [ {"name": "Black bean", "ing": ["Pork Ribs", "Black bean", "Lotus root"]}, ... ],
+        "soup":    [ {"name": "Black bean", "ing": ["Pork Ribs", ...]}, ... ],
         "fruit":   [ {"name": "Banana", "ing": ["Banana"]}, ... ],
         "carbs":   [ {"name": "Oats", "ing": ["Oats"]}, ... ],
     }
@@ -37,44 +37,41 @@ def load_recipes() -> dict:
     recipes = {"protein": [], "veg": [], "soup": [], "fruit": [], "carbs": []}
     current_section = None
 
-    # Section headers as they appear in column B of the spreadsheet
     SECTION_MAP = {
-        "protein": "protein",
+        "protein":  "protein",
         "vegetable": "veg",
-        "soup": "soup",
+        "soup":     "soup",
     }
 
-    # Fruits and carbs are read from the ingredients master list (columns F and G)
-    FRUITS = ["Banana", "Dragonfruit", "Blueberries", "Apple", "Pear"]
-    CARBS  = ["Brown Rice", "Pasta", "Oats", "Meesua"]
+    # Fruits — weekday pool and weekend pool are defined separately in generate_week
+    # but we still load them all here so the HTML planner can display them
+    FRUITS = [
+        "Banana", "Dragonfruit", "Blueberries", "Apple", "Pear",
+        "Raspberry", "Strawberry", "Avocado banana",
+    ]
+    CARBS = ["Brown Rice", "Pasta", "Oats", "Meesua", "Pasta with prawn"]
 
     for row in ws.iter_rows(min_row=13, values_only=True):
         b = str(row[1]).strip() if row[1] else ""
         c = str(row[2]).strip() if row[2] else ""
 
-        # Detect section header rows (e.g. "Protein", "Vegetable", "Soup")
         if b.lower() in SECTION_MAP:
             current_section = SECTION_MAP[b.lower()]
             continue
 
-        # Skip blank rows or header rows we don't need
         if not b or b.lower() in ("recipe", "ingredient 1", "none"):
             continue
 
-        # Skip the broken formula cell (=C31 came through as "=C31")
         if b.startswith("="):
-            b = "Spinach"  # The formula references Spinach — treat it as such
+            b = "Spinach"
 
         if current_section:
-            # Collect up to 4 ingredients (columns C–F → index 2–5)
             ing = [str(row[i]).strip() for i in range(2, 6)
                    if row[i] and str(row[i]).strip().lower() != "none"]
-            # Avoid duplicates within a section
             names = [r["name"] for r in recipes[current_section]]
             if b not in names:
                 recipes[current_section].append({"name": b, "ing": ing})
 
-    # Add fruits and carbs manually (they live in the master ingredient list, not recipe block)
     for f in FRUITS:
         recipes["fruit"].append({"name": f, "ing": [f]})
     for c_ in CARBS:
@@ -92,88 +89,59 @@ IS_WEEKEND = {"Saturday": True, "Sunday": True}
 
 def generate_week(recipes: dict) -> dict:
     """
-    Auto-generates a full week of meals following the family's typical rotation:
+    Generates a full week of meals following family rules:
 
-      Monday    — Lunch: chicken breast + veg | Dinner: Dun Ji Tang + tofu minced pork + veg
-      Tuesday   — Lunch: Salmon egg + veg     | Dinner: protein + veg + pork rib soup
-      Wednesday — Lunch: protein + veg        | Dinner: pork rib soup + protein + veg
-      Thu–Sun   — Varied rotation, no repeats within the same day
+    SOUP RULE: exactly 1 chicken drumstick soup (Dun Ji Tang) on Monday,
+               exactly 2 pork rib soups spread across Tue–Sun.
 
-    Breakfast:
-      Weekday  → 1 fruit (same fruit all week for easy shopping)
-      Weekend  → Oats + same fruit
+    FIXED DAYS:
+      Monday  — Lunch: Chicken Breast + veg
+                Dinner: Dun Ji Tang (chicken drumstick soup) + protein + veg
+      Tuesday — Lunch: Salmon egg + veg
+                Dinner: protein + veg + 1st pork rib soup
+      Wednesday — Lunch: protein + veg
+                  Dinner: 2nd pork rib soup + protein + veg
+      Thu–Fri — Lunch + Dinner: varied protein + veg, no soup
+      Sat/Sun — Lunch: one of them gets Pasta with prawn (1 dish only)
+                Dinner: protein + veg (no soup on weekends)
 
-    Returns a dict keyed by day name, each value:
-    {
-        "out": {"Breakfast": False, "Lunch": False, "Dinner": False},
-        "Breakfast": [ {"type": "fruit", "name": "Banana", "ing": ["Banana"]}, ... ],
-        "Lunch":     [ ... ],
-        "Dinner":    [ ... ],
-    }
+    FRUIT RULES:
+      Mon+Tue  → fruit from weekday pool (NO apple on Monday)
+      Wed+Thu  → different fruit from weekday pool
+      Fri      → fruit from weekday pool (NO apple on Friday)
+      Sat+Sun  → weekend fruits only: Raspberry, Blueberries, Strawberry, Avocado banana
+      Weekend breakfast: Oats + weekend fruit
+
+    VEG: Broccoli 3–4x per week (weighted), other veg max 2x each.
     """
 
-    def rnd(pool: list, exclude: list = []) -> dict:
-        """Pick a random recipe from pool, avoiding recently used ones."""
-        available = [r for r in pool if r["name"] not in exclude]
-        if not available:
-            available = pool  # fallback: allow repeats if pool is exhausted
-        return random.choice(available)
+    # ── Helpers ──────────────────────────────────────────────────────────────
 
-    def weighted_veg(exclude: list = []) -> dict:
-        """
-        Pick a veg with weighted probability.
-        Broccoli gets 4x weight so it appears ~3-4 times a week.
-        exclude list prevents same veg appearing more than twice in a week.
-        """
-        weighted = []
-        for r in recipes["veg"]:
-            if r["name"] not in exclude:
-                weight = 4 if r["name"].lower() in ("brocoli", "broccoli") else 1
-                weighted.extend([r] * weight)
-        if not weighted:
-            weighted = recipes["veg"]
-        return random.choice(weighted)
+    def rnd(pool, excl=[]):
+        available = [r for r in pool if r["name"] not in excl]
+        return random.choice(available if available else pool)
 
-    def dish(type_: str, name: str) -> dict:
-        """Find a recipe by name and return a dish dict."""
+    def dish(type_, name):
         for r in recipes.get(type_, []):
             if r["name"] == name:
                 return {"type": type_, "name": name, "ing": r["ing"]}
-        # Fallback for custom/unknown names
         return {"type": type_, "name": name, "ing": []}
 
-    # Rotate fruits: pick 3 different fruits, each lasts 2-3 days
-    # e.g. Mon+Tue = Banana, Wed+Thu = Dragonfruit, Fri+Sat+Sun = Blueberries
-    fruit_pool = recipes["fruit"][:]
-    random.shuffle(fruit_pool)
-    # Pick 3 distinct fruits
-    f1, f2, f3 = fruit_pool[0], fruit_pool[1], fruit_pool[2]
-    # Assign: first fruit Mon+Tue, second Wed+Thu, third Fri+Sat+Sun
-    fruit_by_day = {
-        "Monday":    f1,
-        "Tuesday":   f1,
-        "Wednesday": f2,
-        "Thursday":  f2,
-        "Friday":    f3,
-        "Saturday":  f3,
-        "Sunday":    f3,
-    }
+    def weighted_veg(excl=[]):
+        pool = []
+        for r in recipes["veg"]:
+            if r["name"] not in excl:
+                w = 4 if r["name"].lower() in ("brocoli", "broccoli") else 1
+                pool.extend([r] * w)
+        return random.choice(pool if pool else recipes["veg"])
 
-    # Pork rib soups only (for Wed/Tue dinner rotation)
-    pork_soups = [r for r in recipes["soup"]
-                  if "Pork Ribs" in r["ing"]]
-
-    used_veg     = {}   # name -> count this week; veg allowed max 2 times
+    used_veg     = {}  # name → count; broccoli up to 4x, others up to 2x
     used_protein = []
-    used_soup    = []
 
     def next_veg(excl=[]):
-        # Broccoli can appear up to 4x, other veg up to 2x
-        over_limit = [
-            name for name, cnt in used_veg.items()
-            if (cnt >= 4 if name.lower() in ("brocoli","broccoli") else cnt >= 2)
-        ]
-        r = weighted_veg(exclude=over_limit + excl)
+        over = [n for n, c in used_veg.items()
+                if (c >= 4 if n.lower() in ("brocoli", "broccoli") else c >= 2)]
+        r = weighted_veg(excl=over + excl)
         used_veg[r["name"]] = used_veg.get(r["name"], 0) + 1
         return {"type": "veg", **r}
 
@@ -183,72 +151,108 @@ def generate_week(recipes: dict) -> dict:
         if len(used_protein) > 3: used_protein.pop(0)
         return {"type": "protein", **r}
 
-    def next_soup(pool=None, excl=[]):
-        src = pool or recipes["soup"]
-        r = rnd(src, used_soup + excl)
-        used_soup.append(r["name"])
-        if len(used_soup) > 2: used_soup.pop(0)
-        return {"type": "soup", **r}
+    # ── Fruit rotation ───────────────────────────────────────────────────────
+
+    WEEKDAY_FRUITS = [f for f in recipes["fruit"]
+                      if f["name"] not in ("Raspberry", "Strawberry",
+                                           "Avocado banana", "Blueberries")]
+    WEEKEND_FRUITS = [f for f in recipes["fruit"]
+                      if f["name"] in ("Raspberry", "Blueberries",
+                                       "Strawberry", "Avocado banana")]
+
+    # Weekday: 3 slots — Mon/Tue, Wed/Thu, Fri
+    # Mon and Fri cannot be Apple
+    non_apple = [f for f in WEEKDAY_FRUITS if f["name"] != "Apple"]
+    random.shuffle(non_apple)
+
+    f_mon = non_apple[0]                          # Mon/Tue — no apple
+    f_wed = rnd(WEEKDAY_FRUITS, [f_mon["name"]])  # Wed/Thu — any weekday fruit
+    # Fri — no apple, different from Mon fruit if possible
+    f_fri = rnd(non_apple, [f_mon["name"]])
+
+    # Weekend — pick 1 from weekend pool for Sat+Sun
+    f_wknd = random.choice(WEEKEND_FRUITS)
+
+    fruit_by_day = {
+        "Monday":    f_mon,
+        "Tuesday":   f_mon,
+        "Wednesday": f_wed,
+        "Thursday":  f_wed,
+        "Friday":    f_fri,
+        "Saturday":  f_wknd,
+        "Sunday":    f_wknd,
+    }
 
     def breakfast(day):
         fruit = fruit_by_day[day]
-        fruit_dish = {"type": "fruit", "name": fruit["name"], "ing": fruit["ing"]}
+        fd = {"type": "fruit", "name": fruit["name"], "ing": fruit["ing"]}
         if IS_WEEKEND.get(day):
-            oats = {"type": "carbs", "name": "Oats", "ing": ["Oats", fruit["name"]]}
-            return [oats, fruit_dish]
-        return [fruit_dish]
+            oats = {"type": "carbs", "name": "Oats",
+                    "ing": ["Oats", fruit["name"]]}
+            return [oats, fd]
+        return [fd]
+
+    # ── Soup rotation ────────────────────────────────────────────────────────
+    # Rule: 1x Dun Ji Tang (Monday), 2x pork rib soups (Tue + Wed)
+
+    pork_soups = [r for r in recipes["soup"] if "Pork Ribs" in r["ing"]]
+    random.shuffle(pork_soups)
+    pork_soup_1 = pork_soups[0]   # Tuesday dinner
+    pork_soup_2 = pork_soups[1]   # Wednesday dinner
+
+    # ── Pasta with prawn weekend lunch ───────────────────────────────────────
+    # Randomly assign to Saturday or Sunday lunch (only 1 day)
+    pasta_day = random.choice(["Saturday", "Sunday"])
+
+    # ── Build plan ───────────────────────────────────────────────────────────
 
     plan = {}
     for day in DAYS:
         plan[day] = {
             "out": {"Breakfast": False, "Lunch": False, "Dinner": False},
             "Breakfast": breakfast(day),
-            "Lunch": [],
+            "Lunch":  [],
             "Dinner": [],
         }
 
-    # ── Monday ───────────────────────────────────────────────────────────────
-    plan["Monday"]["Lunch"] = [
-        dish("protein", "Chicken Breast"),
-        next_veg(),
-    ]
-    plan["Monday"]["Dinner"] = [
-        dish("soup", "Dun Ji Tang"),
-        dish("protein", "Tofu Minced Pork"),
-        next_veg(),
-    ]
+    # Monday
+    plan["Monday"]["Lunch"]  = [dish("protein", "Chicken Breast"), next_veg()]
+    plan["Monday"]["Dinner"] = [dish("soup", "Dun Ji Tang"),
+                                next_protein(excl=["Chicken Breast"]),
+                                next_veg()]
 
-    # ── Tuesday ──────────────────────────────────────────────────────────────
-    plan["Tuesday"]["Lunch"] = [
-        dish("protein", "Salmon egg"),
-        next_veg(),
-    ]
-    plan["Tuesday"]["Dinner"] = [
-        next_protein(excl=["Salmon egg"]),
-        next_veg(),
-        next_soup(pool=pork_soups, excl=["Dun Ji Tang"]),
-    ]
+    # Tuesday — Salmon egg lunch, pork rib soup 1 at dinner
+    plan["Tuesday"]["Lunch"]  = [dish("protein", "Salmon egg"), next_veg()]
+    plan["Tuesday"]["Dinner"] = [next_protein(excl=["Salmon egg"]),
+                                 next_veg(),
+                                 {"type": "soup", **pork_soup_1}]
 
-    # ── Wednesday ────────────────────────────────────────────────────────────
-    plan["Wednesday"]["Lunch"] = [
-        next_protein(),
-        next_veg(),
-    ]
-    plan["Wednesday"]["Dinner"] = [
-        next_soup(pool=pork_soups),
-        next_protein(),
-        next_veg(),
-    ]
+    # Wednesday — pork rib soup 2 at dinner
+    plan["Wednesday"]["Lunch"]  = [next_protein(), next_veg()]
+    plan["Wednesday"]["Dinner"] = [{"type": "soup", **pork_soup_2},
+                                   next_protein(),
+                                   next_veg()]
 
-    # ── Thursday – Sunday: varied ─────────────────────────────────────────────
-    for day in ["Thursday", "Friday", "Saturday", "Sunday"]:
+    # Thursday + Friday — no soup
+    for day in ["Thursday", "Friday"]:
         lp = next_protein()
         plan[day]["Lunch"]  = [lp, next_veg()]
-        plan[day]["Dinner"] = [
-            next_soup(),
-            next_protein(excl=[lp["name"]]),
-            next_veg(),
-        ]
+        plan[day]["Dinner"] = [next_protein(excl=[lp["name"]]), next_veg()]
+
+    # Saturday + Sunday
+    for day in ["Saturday", "Sunday"]:
+        if day == pasta_day:
+            # Pasta with prawn — single dish lunch
+            plan[day]["Lunch"] = [{"type": "carbs",
+                                   "name": "Pasta with prawn",
+                                   "ing":  ["Pasta", "Prawn"]}]
+        else:
+            lp = next_protein()
+            plan[day]["Lunch"] = [lp, next_veg()]
+
+        # Weekend dinner — protein + veg, no soup
+        dp = next_protein()
+        plan[day]["Dinner"] = [dp, next_veg()]
 
     return plan
 
@@ -261,11 +265,7 @@ THU_DAYS = ["Thursday", "Friday", "Saturday", "Sunday"]
 
 def build_grocery(plan: dict) -> dict:
     """
-    Returns two sorted ingredient lists:
-    {
-        "mon": ["Banana", "Carrot", ...],   # covers Mon–Wed meals
-        "thu": ["Broccoli", "Pork Ribs", ...],  # covers Thu–Sun meals
-    }
+    Returns two sorted ingredient lists split by shopping day.
     Dining-out meals are excluded.
     """
     def collect(days):
