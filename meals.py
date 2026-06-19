@@ -222,8 +222,8 @@ def generate_week(recipes: dict) -> dict:
                                 next_veg()]
 
     # Tuesday — Salmon egg lunch, pork rib soup 1 at dinner
-    plan["Tuesday"]["Lunch"]  = [dish("protein", "Salmon egg"), next_veg()]
-    plan["Tuesday"]["Dinner"] = [next_protein(excl=["Salmon egg"]),
+    plan["Tuesday"]["Lunch"]  = [next_protein(excl=["Salmon egg"]), next_veg()]
+    plan["Tuesday"]["Dinner"] = [dish("protein", "Salmon egg"),
                                  next_veg(),
                                  {"type": "soup", **pork_soup_1}]
 
