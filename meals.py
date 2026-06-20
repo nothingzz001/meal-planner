@@ -1,13 +1,17 @@
 """
 meals.py — Recipe and ingredient data for the Family Meal Planner bot.
 
-Reads directly from Ingredient.xlsx. Edit the spreadsheet to update recipes.
+Reads directly from Ingredient.xlsx in the same folder.
+Edit the spreadsheet to update recipes — no code changes needed.
 
-Spreadsheet layout:
-  Column B = Recipe name / section header
-  Column C-F = Ingredients
-  Column F = Fruits list
-  Column G = Carbs list
+Excel layout:
+  Row 4:  Ingredient header (Meat/Protein | Vegetables | Side | Condiment | Fruits | Carbs | Soup)
+  Row 6+: Ingredient master list (columns B–H)
+  Row 19: Recipe header row  ← skipped
+  Row 20: "Protein" section header
+  Row 21+: Recipe rows (B=name, C-F=ingredients)
+  Row 30: "Vegetable" section header
+  Row 42: "Soup" section header
 """
 
 import os
@@ -16,78 +20,140 @@ from openpyxl import load_workbook
 
 SPREADSHEET = os.path.join(os.path.dirname(__file__), "Ingredient.xlsx")
 
+# Rows to explicitly skip (headers, blank separators)
+SKIP_ROWS = {19}  # "Recipe | Ingredient 1 | Ingredient 2..." header row
+
+# Values that should never be treated as recipe names or ingredients
+SKIP_VALUES = {"none", "ingredient 1", "ingredient 2", "ingredient 3",
+               "ingredient 4", "recipe", "ingredients", "meat / protein",
+               "protein", "vegetable", "soup", "side", "condiment",
+               "fruits", "carbs", "carbs "}
+
+# Known fruits — only pick from column F (index 5) if value is in this list
+# Tomato, Capsicum etc in column F of ingredient rows are NOT fruits
+KNOWN_FRUITS = {
+    "banana", "dragonfruit", "blueberries", "apple", "pear",
+    "raspberry", "strawberry", "avocado banana", "watermelon",
+    "mango", "papaya", "orange", "kiwi", "grapes",
+}
+
+# Weekend-only fruits
+WEEKEND_FRUITS = {"Raspberry", "Strawberry", "Avocado banana", "Blueberries"}
+
+# Soup name suffix — all soups get " soup" appended if not already present
+def _soup_name(raw: str) -> str:
+    r = raw.strip()
+    if r.lower().endswith("soup") or r.lower().endswith("stock") or r.lower().endswith("tang"):
+        return r
+    return r + " soup"
+
 
 def load_recipes() -> dict:
+    """
+    Returns:
+    {
+        "protein": [{"name": ..., "ing": [...]}, ...],
+        "veg":     [...],
+        "soup":    [...],   # names all end with "soup" / "stock" / "tang"
+        "fruit":   [...],
+        "carbs":   [...],
+    }
+    """
     wb = load_workbook(SPREADSHEET, read_only=True, data_only=True)
     ws = wb.active
 
-    recipes = {"protein": [], "veg": [], "soup": [], "fruit": [], "carbs": []}
+    recipes  = {"protein": [], "veg": [], "soup": [], "fruit": [], "carbs": []}
     current_section = None
-    SECTION_MAP = {"protein": "protein", "vegetable": "veg", "soup": "soup"}
 
-    fruits_seen = set()
-    carbs_seen  = set()
+    SECTION_MAP = {
+        "protein":  "protein",
+        "vegetable": "veg",
+        "soup":     "soup",
+    }
 
-    # Weekend-only fruits — ensure they're always available even if not in Excel
-    WEEKEND_FRUITS = ["Raspberry", "Strawberry", "Avocado banana", "Blueberries"]
+    fruits_seen = []   # ordered, deduped
+    carbs_seen  = []
 
-    for row in ws.iter_rows(min_row=3, values_only=True):
+    for row_idx, row in enumerate(ws.iter_rows(min_row=3, values_only=True), start=3):
+        if row_idx in SKIP_ROWS:
+            continue
+
         b = str(row[1]).strip() if row[1] else ""
+        b_low = b.lower()
 
-        # Collect fruits from column F (index 5)
-        f = str(row[5]).strip() if row[5] else ""
-        if f and f.lower() not in ("fruits", "none", ""):
-            fruits_seen.add(f)
+        # ── Collect fruits from column F (index 5) ──
+        # Only accept values that are actually known fruits
+        f_raw = str(row[5]).strip() if row[5] else ""
+        f_low = f_raw.lower().strip()
+        if f_low and f_low in KNOWN_FRUITS and f_raw not in fruits_seen:
+            fruits_seen.append(f_raw.strip())
 
-        # Collect carbs from column G (index 6)
-        c = str(row[6]).strip() if row[6] else ""
-        if c and c.lower() not in ("carbs", "carbs ", "none", ""):
-            carbs_seen.add(c)
+        # ── Collect carbs from column G (index 6) ──
+        c_raw = str(row[6]).strip() if row[6] else ""
+        c_low = c_raw.lower().strip()
+        if c_low and c_low not in SKIP_VALUES and c_raw not in carbs_seen:
+            carbs_seen.append(c_raw.strip())
 
-        if b.lower() in SECTION_MAP:
-            current_section = SECTION_MAP[b.lower()]
+        # ── Section detection ──
+        if b_low in SECTION_MAP:
+            current_section = SECTION_MAP[b_low]
             continue
 
-        if not b or b.lower() in ("recipe", "ingredient 1", "none",
-                                   "ingredients", "meat / protein"):
+        # ── Skip header/blank rows ──
+        if not b or b_low in SKIP_VALUES:
             continue
 
+        # ── Skip broken formula cells ──
         if b.startswith("="):
             b = "Spinach"
 
+        # ── Add recipe to current section ──
         if current_section:
-            ing = [str(row[i]).strip() for i in range(2, 6)
-                   if row[i] and str(row[i]).strip().lower() not in ("none", "")]
-            names = [r["name"] for r in recipes[current_section]]
-            if b not in names:
+            ing = []
+            for i in range(2, 6):  # columns C–F = indices 2–5
+                val = str(row[i]).strip() if row[i] else ""
+                if val and val.lower() not in SKIP_VALUES:
+                    ing.append(val)
+
+            # For soups: rename to include "soup" / "stock" / "tang"
+            if current_section == "soup":
+                b = _soup_name(b)
+
+            existing_names = [r["name"] for r in recipes[current_section]]
+            if b not in existing_names:
                 recipes[current_section].append({"name": b, "ing": ing})
 
-    # Build fruit list from Excel
-    for f in sorted(fruits_seen):
-        f = f.strip()
-        if f:
-            recipes["fruit"].append({"name": f, "ing": [f]})
+    # ── Build fruit list ──
+    for f in fruits_seen:
+        recipes["fruit"].append({"name": f, "ing": [f]})
 
-    # Ensure weekend fruits are always present
-    existing = [r["name"] for r in recipes["fruit"]]
-    for wf in WEEKEND_FRUITS:
-        if wf not in existing:
+    # Ensure weekend fruits always present
+    existing_fruits = {r["name"] for r in recipes["fruit"]}
+    for wf in sorted(WEEKEND_FRUITS):
+        if wf not in existing_fruits:
             recipes["fruit"].append({"name": wf, "ing": [wf]})
 
-    # Build carbs list
-    for c in sorted(carbs_seen):
-        c = c.strip()
-        if c:
-            recipes["carbs"].append({"name": c, "ing": [c]})
+    # ── Build carbs list ──
+    for c in carbs_seen:
+        recipes["carbs"].append({"name": c, "ing": [c]})
 
-    # Ensure Pasta with prawn is always present
-    carb_names = [r["name"] for r in recipes["carbs"]]
+    # Ensure Pasta with prawn always present
+    carb_names = {r["name"] for r in recipes["carbs"]}
     if "Pasta with prawn" not in carb_names:
         recipes["carbs"].append({"name": "Pasta with prawn", "ing": ["Pasta", "Prawn"]})
+
+    # Also add Chicken Breast as a protein if not present (used by Monday fixed rule)
+    protein_names = {r["name"] for r in recipes["protein"]}
+    if "Chicken Breast" not in protein_names:
+        recipes["protein"].append({"name": "Chicken Breast", "ing": ["Chicken Breast", "Ginger"]})
+    if "Salmon egg" not in protein_names:
+        recipes["protein"].append({"name": "Salmon egg", "ing": ["Salmon", "Eggs"]})
 
     wb.close()
     return recipes
 
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 IS_WEEKEND = {"Saturday": True, "Sunday": True}
@@ -95,35 +161,39 @@ IS_WEEKEND = {"Saturday": True, "Sunday": True}
 
 def generate_week(recipes: dict) -> dict:
     """
-    Weekly meal plan following family rotation:
+    Weekly meal plan:
 
-    DINNER ROTATION (fixed):
-      Monday    — Dun Ji Tang (chicken soup) + protein + veg
+    DINNER (fixed rotation):
+      Monday    — Dun Ji Tang soup + Chicken Breast + veg
       Tuesday   — Salmon egg + veg + pork rib soup
-      Wednesday — Pork/chicken dish + veg + egg dish
-      Thursday  — Pork rib soup + chicken or egg protein + veg
-      Friday    — Varied protein + veg
-      Saturday  — Protein + veg (no soup)
-      Sunday    — Protein + veg (no soup)
+      Wednesday — Pork/chicken protein + veg + egg dish
+      Thursday  — Pork rib soup + chicken/egg protein + veg
+      Friday    — Varied protein + veg (no soup)
+      Sat/Sun   — Protein + veg (no soup)
 
-    LUNCH: random protein + veg every day
-           Saturday lunch = Pasta with prawn (1 dish only)
+    LUNCH: random protein + veg each day
+      Saturday lunch = Pasta with prawn (1 dish only, no other dish)
 
-    SOUP: exactly 1 Dun Ji Tang (Monday), 2 pork rib soups (Tue + Thu)
+    SALMON RULE: max 2x per week
+      - Tuesday dinner is always Salmon egg (fixed)
+      - One more salmon dish allowed on Thu or Fri dinner only
+      - No other salmon anywhere
+
+    SOUP: 1x Dun Ji Tang (Mon), 2x pork rib soups (Tue + Thu)
 
     FRUIT:
-      Weekdays  — rotate 3 fruits across the week (Mon/Tue, Wed/Thu, Fri)
-      Mon + Fri — never Apple
-      Weekend   — Raspberry, Blueberries, Strawberry or Avocado banana only
+      Mon/Tue  — weekday fruit, NOT Apple
+      Wed/Thu  — different weekday fruit
+      Fri      — weekday fruit, NOT Apple
+      Sat/Sun  — weekend fruit only (Raspberry/Blueberries/Strawberry/Avocado banana)
+      Weekend breakfast: Oats + fruit
 
-    VEG: Broccoli 3–4x/week, other veg max 2x each
+    VEG: Broccoli 3–4x, others max 2x each
     """
 
-    # ── Helpers ──────────────────────────────────────────────────────────────
-
     def rnd(pool, excl=[]):
-        available = [r for r in pool if r["name"] not in excl]
-        return random.choice(available if available else pool)
+        a = [r for r in pool if r["name"] not in excl]
+        return random.choice(a if a else pool)
 
     def find(type_, name):
         for r in recipes.get(type_, []):
@@ -131,56 +201,57 @@ def generate_week(recipes: dict) -> dict:
                 return {"type": type_, "name": name, "ing": r["ing"]}
         return {"type": type_, "name": name, "ing": []}
 
+    # ── Veg rotation ──────────────────────────────────────────────────────────
+    used_veg = {}
+
     def weighted_veg(excl=[]):
         pool = []
         for r in recipes["veg"]:
             if r["name"] not in excl:
-                w = 4 if r["name"].lower() in ("brocoli", "broccoli") else 1
+                w = 4 if "brocoli" in r["name"].lower() else 1
                 pool.extend([r] * w)
         return random.choice(pool if pool else recipes["veg"])
 
-    used_veg     = {}
-    used_protein = []
-
-    def next_veg(excl=[]):
+    def nv(excl=[]):
         over = [n for n, c in used_veg.items()
-                if (c >= 4 if n.lower() in ("brocoli", "broccoli") else c >= 2)]
+                if (c >= 4 if "brocoli" in n.lower() else c >= 2)]
         r = weighted_veg(excl=over + excl)
         used_veg[r["name"]] = used_veg.get(r["name"], 0) + 1
         return {"type": "veg", **r}
 
-    def next_protein(excl=[]):
-        r = rnd(recipes["protein"], used_protein + excl)
-        used_protein.append(r["name"])
-        if len(used_protein) > 3:
-            used_protein.pop(0)
+    # ── Protein rotation ──────────────────────────────────────────────────────
+    used_prot = []
+    salmon_count = [0]  # track salmon dishes; max 2 (Tue dinner + one more)
+
+    def is_salmon(name):
+        return "salmon" in name.lower()
+
+    def np(excl=[], allow_salmon=False):
+        pool = recipes["protein"]
+        # Exclude salmon if already at max or not allowed
+        salmon_excl = [] if (allow_salmon and salmon_count[0] < 2) else \
+                      [r["name"] for r in pool if is_salmon(r["name"])]
+        r = rnd(pool, used_prot + excl + salmon_excl)
+        used_prot.append(r["name"])
+        if len(used_prot) > 3: used_prot.pop(0)
+        if is_salmon(r["name"]): salmon_count[0] += 1
         return {"type": "protein", **r}
 
-    # ── Fruit pools ───────────────────────────────────────────────────────────
+    # ── Fruit rotation ────────────────────────────────────────────────────────
+    WKND_SET = {"Raspberry", "Strawberry", "Avocado banana", "Blueberries"}
+    weekday_f  = [f for f in recipes["fruit"] if f["name"] not in WKND_SET]
+    weekend_f  = [f for f in recipes["fruit"] if f["name"] in WKND_SET]
+    non_apple  = [f for f in weekday_f if f["name"].strip().lower() != "apple"]
 
-    WEEKEND_NAMES = {"Raspberry", "Strawberry", "Avocado banana", "Blueberries"}
+    if not weekend_f:
+        weekend_f = recipes["fruit"]
+    if not non_apple:
+        non_apple = weekday_f
 
-    weekday_fruits = [f for f in recipes["fruit"]
-                      if f["name"] not in WEEKEND_NAMES]
-    weekend_fruits = [f for f in recipes["fruit"]
-                      if f["name"] in WEEKEND_NAMES]
-
-    if not weekend_fruits:
-        weekend_fruits = recipes["fruit"]  # fallback
-
-    non_apple_weekday = [f for f in weekday_fruits if f["name"] != "Apple"]
-    if not non_apple_weekday:
-        non_apple_weekday = weekday_fruits
-
-    # Mon/Tue fruit — no apple
-    f_mon = random.choice(non_apple_weekday)
-    # Wed/Thu fruit — different from Mon
-    f_wed = rnd(weekday_fruits, [f_mon["name"]])
-    # Fri fruit — no apple, try different from Mon
-    f_fri_pool = [f for f in non_apple_weekday if f["name"] != f_mon["name"]]
-    f_fri = random.choice(f_fri_pool if f_fri_pool else non_apple_weekday)
-    # Weekend — from weekend pool
-    f_wknd = random.choice(weekend_fruits)
+    f_mon  = random.choice(non_apple)
+    f_wed  = rnd(weekday_f, [f_mon["name"]])
+    f_fri  = rnd([f for f in non_apple if f["name"] != f_mon["name"]] or non_apple, [])
+    f_wknd = random.choice(weekend_f)
 
     fruit_by_day = {
         "Monday": f_mon, "Tuesday": f_mon,
@@ -193,97 +264,94 @@ def generate_week(recipes: dict) -> dict:
         fruit = fruit_by_day[day]
         fd = {"type": "fruit", "name": fruit["name"], "ing": fruit["ing"]}
         if IS_WEEKEND.get(day):
-            return [{"type": "carbs", "name": "Oats",
-                     "ing": ["Oats", fruit["name"]]}, fd]
+            return [{"type": "carbs", "name": "Oats", "ing": ["Oats", fruit["name"]]}, fd]
         return [fd]
 
     # ── Soup selection ────────────────────────────────────────────────────────
-    # 1x Dun Ji Tang (Monday), 2x pork rib soups (Tuesday + Thursday)
-
     pork_soups = [r for r in recipes["soup"] if "Pork Ribs" in r["ing"]]
     random.shuffle(pork_soups)
-    pork_soup_tue = pork_soups[0]
-    pork_soup_thu = pork_soups[1] if len(pork_soups) > 1 else pork_soups[0]
+    ps_tue = pork_soups[0] if pork_soups else None
+    ps_thu = pork_soups[1] if len(pork_soups) > 1 else ps_tue
 
-    # ── Egg proteins (for Wed/Thu dinner rule) ────────────────────────────────
-    egg_proteins = [r for r in recipes["protein"]
-                    if "Eggs" in r["ing"] or "egg" in r["name"].lower()]
-    pork_proteins = [r for r in recipes["protein"]
-                     if any(p in r["ing"] for p in
-                            ["Minced Pork", "Pork Ribs", "Chicken Thighs",
-                             "Chicken Breast", "Chicken drumstick"])]
+    # ── Wed dinner proteins ───────────────────────────────────────────────────
+    pork_chk = [r for r in recipes["protein"]
+                if any(i in r["ing"] for i in
+                       ["Minced Pork", "Chicken Thighs", "Chicken drumstick"])]
+    egg_prot = [r for r in recipes["protein"]
+                if "Eggs" in r["ing"] or "egg" in r["name"].lower()]
+    wed_pork = rnd(pork_chk, ["Chicken Breast", "Salmon egg"]) if pork_chk else rnd(recipes["protein"], [])
+    # Wed egg: exclude salmon entirely (salmon is reserved for Tue dinner + one Thu/Fri slot)
+    non_salmon_egg = [r for r in egg_prot if not is_salmon(r["name"])]
+    wed_egg = rnd(non_salmon_egg if non_salmon_egg else egg_prot, [wed_pork["name"]])
+
+    # ── Thu dinner protein ────────────────────────────────────────────────────
+    # Thu pool excludes salmon (salmon only appears via explicit second_salmon_day logic)
+    thu_pool = [r for r in recipes["protein"]
+                if any(i in r["ing"] for i in
+                       ["Chicken Thighs", "Chicken Breast", "Chicken drumstick", "Eggs"])
+                and not is_salmon(r["name"])]
+    thu_prot = rnd(thu_pool, [wed_pork["name"], wed_egg["name"]]) if thu_pool else rnd(recipes["protein"], [])
+
+    # ── Decide if Thu or Fri dinner gets the 2nd salmon dish ─────────────────
+    second_salmon_day = random.choice(["Thursday", "Friday"])
 
     # ── Build plan ────────────────────────────────────────────────────────────
-
     plan = {}
     for day in DAYS:
         plan[day] = {
             "out": {"Breakfast": False, "Lunch": False, "Dinner": False},
             "Breakfast": breakfast(day),
-            "Lunch":  [],
-            "Dinner": [],
+            "Lunch": [], "Dinner": [],
         }
 
-    # ── Monday ────────────────────────────────────────────────────────────────
-    # Dinner: Dun Ji Tang + protein + veg
-    plan["Monday"]["Lunch"]  = [next_protein(excl=["Chicken Breast"]), next_veg()]
-    plan["Monday"]["Dinner"] = [
-        find("soup", "Dun Ji Tang"),
-        find("protein", "Chicken Breast"),
-        next_veg(),
-    ]
+    # Count Tuesday salmon egg as 1
+    salmon_count[0] = 1  # pre-count Tue dinner salmon egg
 
-    # ── Tuesday ───────────────────────────────────────────────────────────────
-    # Dinner: Salmon egg + veg + pork rib soup
-    plan["Tuesday"]["Lunch"]  = [next_protein(excl=["Salmon egg"]), next_veg()]
-    plan["Tuesday"]["Dinner"] = [
-        find("protein", "Salmon egg"),
-        next_veg(),
-        {"type": "soup", **pork_soup_tue},
-    ]
+    # Monday
+    plan["Monday"]["Lunch"]  = [np(excl=["Chicken Breast"]), nv()]
+    plan["Monday"]["Dinner"] = [find("soup", "Dun Ji Tang"),
+                                find("protein", "Chicken Breast"), nv()]
 
-    # ── Wednesday ─────────────────────────────────────────────────────────────
-    # Dinner: pork/chicken dish + veg + egg dish
-    wed_pork = rnd(pork_proteins, ["Chicken Breast", "Salmon egg"])
-    wed_egg  = rnd(egg_proteins,  [wed_pork["name"]])
-    plan["Wednesday"]["Lunch"]  = [next_protein(), next_veg()]
-    plan["Wednesday"]["Dinner"] = [
-        {"type": "protein", **wed_pork},
-        next_veg(),
-        {"type": "protein", **wed_egg},
-    ]
+    # Tuesday
+    plan["Tuesday"]["Lunch"]  = [np(excl=["Salmon egg"]), nv()]
+    plan["Tuesday"]["Dinner"] = [find("protein", "Salmon egg"), nv(),
+                                 {"type": "soup", **ps_tue} if ps_tue else np()]
 
-    # ── Thursday ──────────────────────────────────────────────────────────────
-    # Dinner: pork rib soup + chicken or egg protein + veg
-    thu_protein_pool = [r for r in recipes["protein"]
-                        if any(p in r["ing"] for p in
-                               ["Chicken Thighs", "Chicken Breast",
-                                "Chicken drumstick", "Eggs"])]
-    thu_protein = rnd(thu_protein_pool, [wed_pork["name"], wed_egg["name"]])
-    plan["Thursday"]["Lunch"]  = [next_protein(), next_veg()]
+    # Wednesday
+    plan["Wednesday"]["Lunch"]  = [np(excl=[wed_pork["name"], wed_egg["name"]]), nv()]
+    plan["Wednesday"]["Dinner"] = [{"type": "protein", **wed_pork},
+                                   nv(),
+                                   {"type": "protein", **wed_egg}]
+
+    # Thursday
+    salmon_allowed_thu = (second_salmon_day == "Thursday")
+    plan["Thursday"]["Lunch"]  = [np(excl=[thu_prot["name"]]), nv()]
     plan["Thursday"]["Dinner"] = [
-        {"type": "soup", **pork_soup_thu},
-        {"type": "protein", **thu_protein},
-        next_veg(),
+        {"type": "soup", **ps_thu} if ps_thu else np(),
+        find("protein", "Steamed Salmon") if salmon_allowed_thu
+            else {"type": "protein", **thu_prot},
+        nv(),
+    ]
+    if salmon_allowed_thu:
+        salmon_count[0] += 1
+
+    # Friday
+    salmon_allowed_fri = (second_salmon_day == "Friday")
+    plan["Friday"]["Lunch"]  = [np(excl=["Salmon egg"], allow_salmon=False), nv()]
+    plan["Friday"]["Dinner"] = [
+        find("protein", "Steamed Salmon") if salmon_allowed_fri
+            else np(excl=["Salmon egg"], allow_salmon=False),
+        nv(),
     ]
 
-    # ── Friday ────────────────────────────────────────────────────────────────
-    # Dinner: varied protein + veg (no soup)
-    plan["Friday"]["Lunch"]  = [next_protein(), next_veg()]
-    plan["Friday"]["Dinner"] = [next_protein(), next_veg()]
+    # Saturday — pasta with prawn lunch only
+    plan["Saturday"]["Lunch"]  = [{"type": "carbs", "name": "Pasta with prawn",
+                                    "ing": ["Pasta", "Prawn"]}]
+    plan["Saturday"]["Dinner"] = [np(allow_salmon=False), nv()]
 
-    # ── Saturday ──────────────────────────────────────────────────────────────
-    # Lunch: Pasta with prawn only (1 dish)
-    # Dinner: protein + veg
-    plan["Saturday"]["Lunch"]  = [{"type": "carbs",
-                                    "name": "Pasta with prawn",
-                                    "ing":  ["Pasta", "Prawn"]}]
-    plan["Saturday"]["Dinner"] = [next_protein(), next_veg()]
-
-    # ── Sunday ────────────────────────────────────────────────────────────────
-    # Lunch + Dinner: protein + veg
-    plan["Sunday"]["Lunch"]  = [next_protein(), next_veg()]
-    plan["Sunday"]["Dinner"] = [next_protein(), next_veg()]
+    # Sunday
+    plan["Sunday"]["Lunch"]  = [np(allow_salmon=False), nv()]
+    plan["Sunday"]["Dinner"] = [np(allow_salmon=False), nv()]
 
     return plan
 
@@ -302,8 +370,8 @@ def build_grocery(plan: dict) -> dict:
             for meal in ["Breakfast", "Lunch", "Dinner"]:
                 if data["out"].get(meal):
                     continue
-                for dish_ in data.get(meal, []):
-                    ings = dish_.get("ing") or [dish_["name"]]
+                for dish in data.get(meal, []):
+                    ings = dish.get("ing") or [dish["name"]]
                     for i in ings:
                         if i:
                             items.add(i.strip())
