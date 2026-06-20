@@ -645,56 +645,11 @@ body {
 const DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const IS_WE = {Saturday:true,Sunday:true};
 
-const REC = {
-  protein:[
-    {name:'Soy sauce Chicken',    ing:['Chicken Thighs']},
-    {name:'Herbal Chicken',       ing:['Chicken Thighs','Goji berries','Red date']},
-    {name:'Chicken Breast',       ing:['Chicken Breast','Ginger']},
-    {name:'Tofu Minced Pork',     ing:['Minced Pork','Soft Tofu']},
-    {name:'Tofu egg',             ing:['Hard Tofu','Eggs']},
-    {name:'Salmon egg',           ing:['Salmon','Eggs']},
-    {name:'Tuna Egg',             ing:['Tuna','Eggs']},
-    {name:'Sardine',              ing:['Sardine','Tomato']},
-    {name:'Steamed Salmon',       ing:['Salmon']},
-    {name:'Chicken drumstick',    ing:['Chicken drumstick','Ginger']},
-  ],
-  veg:[
-    {name:'Spinach',              ing:['Spinach','Carrot','Mushrooms']},
-    {name:'Green Dragon Veg',     ing:['Green Dragon Veg','Beansprout','Ikan Bilis']},
-    {name:'Bamboo shoot',         ing:['Bamboo shoot','Carrot','Mushrooms']},
-    {name:'Chye sim',             ing:['Chye sim','Carrot','Mushrooms']},
-    {name:'Kai Lan',              ing:['Kai Lan','Carrot','Mushrooms']},
-    {name:'Lady finger',          ing:['Lady finger','Carrot','Mushrooms']},
-    {name:'Brocoli',              ing:['Brocoli','Carrot','Mushrooms']},
-    {name:'Zucchini/cucumber',    ing:['Zucchini/cucumber','Carrot','Mushrooms']},
-  ],
-  soup:[
-    {name:'Black bean soup',      ing:['Pork Ribs','Black bean','Lotus root']},
-    {name:'Winter Melon soup',    ing:['Pork Ribs','Winter melon']},
-    {name:'ABC soup',             ing:['Pork Ribs','Carrot','Corn','Tomato']},
-    {name:'Si Shen soup',         ing:['Pork Ribs','Carrot','Si Shen Herbs']},
-    {name:'Liu Wei soup',         ing:['Pork Ribs','Carrot','Liu Wei Herbs']},
-    {name:'Old cucumber soup',    ing:['Pork Ribs','Carrot','Old cucumber']},
-    {name:'Dun Ji Tang',          ing:['Chicken drumstick','Carrot','Dun Ji Tang Herbs']},
-    {name:'Chicken bone stock',   ing:['Chicken bone','Ginger']},
-    {name:'Fish bone stock',      ing:['Fish bone','Ginger']},
-  ],
-  fruit:[
-    {name:'Banana',               ing:['Banana']},
-    {name:'Dragonfruit',          ing:['Dragonfruit']},
-    {name:'Blueberries',          ing:['Blueberries']},
-    {name:'Apple',                ing:['Apple']},
-    {name:'Pear',                 ing:['Pear']},
-    {name:'Strawberry',           ing:['Strawberry']},
-  ],
-  carbs:[
-    {name:'Oats',                 ing:['Oats']},
-    {name:'Brown Rice',           ing:['Brown Rice']},
-    {name:'Pasta',                ing:['Pasta']},
-    {name:'Meesua',               ing:['Meesua']},
-  ],
+// Recipes are loaded from Railway API on startup (see init() below)
+// This default is used only if the API is unreachable
+let REC = {
+  protein:[], veg:[], soup:[], fruit:[], carbs:[]
 };
-
 const TYPE_DOT = {protein:'protein-dot',veg:'veg-dot',soup:'soup-dot',fruit:'fruit-dot',carbs:'carbs-dot'};
 const DOT_COLOR = {protein:'var(--protein)',veg:'var(--veg)',soup:'var(--soup)',fruit:'var(--fruit)',carbs:'var(--carbs)'};
 const ING_CAT = {
@@ -706,13 +661,160 @@ const ING_CAT = {
   'Beansprout':'veg','Tomato':'veg','Corn':'veg','Winter melon':'veg','Old cucumber':'veg',
   'Lotus root':'veg','Ikan Bilis':'veg','Ginger':'veg','Goji berries':'veg','Red date':'veg',
   'Black bean':'soup','Si Shen Herbs':'soup','Liu Wei Herbs':'soup','Dun Ji Tang Herbs':'soup',
-  'Banana':'fruit','Apple':'fruit','Blueberries':'fruit','Dragonfruit':'fruit','Pear':'fruit','Strawberry':'fruit',
+  'Banana':'fruit','Apple':'fruit','Blueberries':'fruit','Dragonfruit':'fruit','Pear':'fruit','Strawberry':'fruit','Raspberry':'fruit','Avocado banana':'fruit',
   'Oats':'carbs','Brown Rice':'carbs','Pasta':'carbs','Meesua':'carbs',
 };
 
 // ── Generation ────────────────────────────────────────────────────────────────
 function findRec(type,name){ return (REC[type]||[]).find(r=>r.name===name); }
 function makeDish(type,name){ const r=findRec(type,name); return {type,name,ing:r?r.ing:[]}; }
+
+function rnd(arr,excl=[]){
+  const a=arr.filter(x=>!excl.includes(x));
+  return (a.length?a:arr)[Math.floor(Math.random()*(a.length||arr.length))];
+}
+function weightedVeg(excl=[]){
+  const pool=[];
+  REC.veg.forEach(r=>{
+    if(!excl.includes(r.name)){
+      const w=r.name.toLowerCase().includes('brocoli')?4:1;
+      for(let i=0;i<w;i++) pool.push(r.name);
+    }
+  });
+  const src=pool.length?pool:REC.veg.map(r=>r.name);
+  return src[Math.floor(Math.random()*src.length)];
+}
+
+function generateWeek(){
+  // Uses REC loaded from Railway API (updates whenever Excel changes)
+  const WEEKEND_NAMES = new Set(['Raspberry','Strawberry','Avocado banana','Blueberries']);
+
+  const weekdayFruits = (REC.fruit||[]).filter(f=>!WEEKEND_NAMES.has(f.name));
+  const weekendFruits = (REC.fruit||[]).filter(f=>WEEKEND_NAMES.has(f.name));
+  const nonApple      = weekdayFruits.filter(f=>f.name!=='Apple');
+
+  function rndF(pool,excl=[]){
+    const a=pool.filter(f=>!excl.includes(f.name));
+    return a.length?a[Math.floor(Math.random()*a.length)]:pool[0]||{name:'Banana',ing:['Banana']};
+  }
+
+  const fMon  = rndF(nonApple.length?nonApple:weekdayFruits);
+  const fWed  = rndF(weekdayFruits,[fMon.name]);
+  const friFr = nonApple.filter(f=>f.name!==fMon.name);
+  const fFri  = rndF(friFr.length?friFr:nonApple);
+  const fWknd = weekendFruits.length?weekendFruits[Math.floor(Math.random()*weekendFruits.length)]:(REC.fruit||[{name:'Blueberries',ing:['Blueberries']}])[0];
+
+  const fruitByDay = {
+    Monday:fMon,Tuesday:fMon,
+    Wednesday:fWed,Thursday:fWed,
+    Friday:fFri,Saturday:fWknd,Sunday:fWknd
+  };
+
+  const usedVeg={}, usedProt=[];
+
+  function weightedVeg(excl=[]){
+    const pool=[];
+    (REC.veg||[]).forEach(r=>{
+      if(!excl.includes(r.name)){
+        const w=r.name.toLowerCase().includes('brocoli')?4:1;
+        for(let i=0;i<w;i++) pool.push(r.name);
+      }
+    });
+    return pool.length?pool[Math.floor(Math.random()*pool.length)]:(REC.veg||[])[0]?.name||'';
+  }
+
+  function nv(ex=[]){
+    const over=Object.entries(usedVeg)
+      .filter(([n,c])=>n.toLowerCase().includes('brocoli')?c>=4:c>=2).map(([n])=>n);
+    const name=weightedVeg([...over,...ex]);
+    usedVeg[name]=(usedVeg[name]||0)+1;
+    const r=findRec('veg',name);
+    return {type:'veg',name,ing:r?r.ing:[]};
+  }
+
+  function np(ex=[]){
+    const pool=(REC.protein||[]).map(r=>r.name).filter(n=>!usedProt.includes(n)&&!ex.includes(n));
+    const name=pool.length?pool[Math.floor(Math.random()*pool.length)]:(REC.protein||[])[0]?.name||'';
+    usedProt.push(name); if(usedProt.length>3) usedProt.shift();
+    const r=findRec('protein',name);
+    return {type:'protein',name,ing:r?r.ing:[]};
+  }
+
+  function fd(type,name){return makeDish(type,name);}
+
+  // Pork rib soups
+  const porkSoups=(REC.soup||[]).filter(r=>r.ing&&r.ing.includes('Pork Ribs'));
+  const shuffledPS=[...porkSoups].sort(()=>Math.random()-.5);
+  const psTue=shuffledPS[0]||porkSoups[0];
+  const psThu=shuffledPS[1]||shuffledPS[0]||porkSoups[0];
+
+  // Egg proteins (for Wed dinner)
+  const eggP=(REC.protein||[]).filter(r=>r.ing&&r.ing.includes('Eggs')||r.name.toLowerCase().includes('egg'));
+  // Pork/chicken proteins (for Wed dinner)
+  const porkChickenP=(REC.protein||[]).filter(r=>r.ing&&r.ing.some(i=>['Minced Pork','Chicken Thighs','Chicken Breast','Chicken drumstick'].includes(i)));
+
+  function rndP(pool,excl=[]){
+    const a=pool.filter(r=>!excl.includes(r.name));
+    const src=a.length?a:pool;
+    return src.length?src[Math.floor(Math.random()*src.length)]:(REC.protein||[])[0];
+  }
+
+  const wedPork=rndP(porkChickenP,['Chicken Breast','Salmon egg']);
+  const wedEgg =rndP(eggP,wedPork?[wedPork.name]:[]);
+  const thuP   =rndP((REC.protein||[]).filter(r=>r.ing&&r.ing.some(i=>['Chicken Thighs','Chicken Breast','Chicken drumstick','Eggs'].includes(i))),
+                     [wedPork?.name,wedEgg?.name].filter(Boolean));
+
+  function bf(day){
+    const fruit=fruitByDay[day]||fMon;
+    const fd2={type:'fruit',name:fruit.name,ing:fruit.ing};
+    if(day==='Saturday'||day==='Sunday')
+      return [{type:'carbs',name:'Oats',ing:['Oats',fruit.name]},fd2];
+    return [fd2];
+  }
+
+  const p={};
+  DAYS.forEach(d=>{p[d]={out:{Breakfast:false,Lunch:false,Dinner:false},Breakfast:bf(d),Lunch:[],Dinner:[]};});
+
+  // Monday
+  p.Monday.Lunch  = [np(['Chicken Breast']), nv()];
+  p.Monday.Dinner = [fd('soup','Dun Ji Tang'), fd('protein','Chicken Breast'), nv()];
+
+  // Tuesday
+  p.Tuesday.Lunch  = [np(['Salmon egg']), nv()];
+  p.Tuesday.Dinner = [fd('protein','Salmon egg'), nv(),
+                      psTue?{type:'soup',...psTue}:np()];
+
+  // Wednesday — pork/chicken + veg + egg
+  p.Wednesday.Lunch  = [np(), nv()];
+  p.Wednesday.Dinner = [
+    wedPork?{type:'protein',...wedPork}:np(),
+    nv(),
+    wedEgg?{type:'protein',...wedEgg}:np(),
+  ];
+
+  // Thursday — pork soup + chicken/egg + veg
+  p.Thursday.Lunch  = [np(), nv()];
+  p.Thursday.Dinner = [
+    psThu?{type:'soup',...psThu}:np(),
+    thuP?{type:'protein',...thuP}:np(),
+    nv(),
+  ];
+
+  // Friday — protein + veg, no soup
+  p.Friday.Lunch  = [np(), nv()];
+  p.Friday.Dinner = [np(), nv()];
+
+  // Saturday — pasta with prawn for lunch only
+  p.Saturday.Lunch  = [{type:'carbs',name:'Pasta with prawn',ing:['Pasta','Prawn']}];
+  p.Saturday.Dinner = [np(), nv()];
+
+  // Sunday
+  p.Sunday.Lunch  = [np(), nv()];
+  p.Sunday.Dinner = [np(), nv()];
+
+  return p;
+}
+
 
 function rnd(arr,excl=[]){
   const a=arr.filter(x=>!excl.includes(x));
@@ -781,9 +883,7 @@ function generateWeek(){
 }
 
 // ── API connection ──────────────────────────────────────────────────────────
-// When hosted on Railway, API_BASE is empty (same server).
-// When HTML is on Vercel and Flask is on Railway, set this to your Railway URL:
-//   const API_BASE = 'web-production-2794a.up.railway.app';
+// API connects Vercel HTML to Railway Flask backend
 const API_BASE = 'https://web-production-2794a.up.railway.app';
 
 let plan = generateWeek(); // fallback until API loads
@@ -1140,18 +1240,32 @@ document.querySelectorAll('.overlay').forEach(o=>{
   o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');});
 });
 
-// Load plan from Flask API on startup
+// Load recipes + plan from Railway API on startup
 async function init(){
   try {
-    const res  = await fetch(API_BASE + '/api/plan');
-    const data = await res.json();
-    if(data.ok){
-      plan = data.plan;
-      if(data.week) document.getElementById('week-label').textContent = data.week;
+    // 1. Load recipes from Excel (via Railway)
+    const rRes  = await fetch(API_BASE + '/api/recipes');
+    const rData = await rRes.json();
+    if(rData.ok){
+      REC = rData.recipes;
     }
   } catch(e){
-    console.warn('API not reachable — using local generated plan', e);
+    console.warn('Could not load recipes from API', e);
   }
+
+  try {
+    // 2. Load the current week plan
+    const pRes  = await fetch(API_BASE + '/api/plan');
+    const pData = await pRes.json();
+    if(pData.ok){
+      plan = pData.plan;
+      if(pData.week) document.getElementById('week-label').textContent = pData.week;
+    }
+  } catch(e){
+    console.warn('Could not load plan from API — generating locally', e);
+    plan = generateWeek();
+  }
+
   render();
 }
 
