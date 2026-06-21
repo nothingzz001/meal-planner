@@ -735,8 +735,8 @@ function weightedVeg(excl=[]){
 
 function generateWeek(){
   const fruits=[...REC.fruit].sort(()=>Math.random()-.5);
-  const [f1,f2,f3]=fruits;
-  const fruitByDay={Monday:f1,Tuesday:f2,Wednesday:f1,Thursday:f3,Friday:f2,Saturday:f3,Sunday:f3};
+  const [f1,f2,f3,f4]=fruits;
+  const fruitByDay={Monday:f1,Tuesday:f2,Wednesday:f1,Thursday:f2,Friday:f3,Saturday:f4,Sunday:f3};
 
   const usedVeg={}, usedProt=[], usedSoup=[];
 
